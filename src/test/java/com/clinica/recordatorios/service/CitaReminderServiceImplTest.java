@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -163,5 +164,47 @@ class CitaReminderServiceImplTest {
             () -> citaReminderService.enviarRecordatorioUrgente(99L));
 
         verifyNoInteractions(canalUrgenteMock);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"2026-08-10T09:00", "2026-08-10T08:00", "2026-08-10T11:01"})
+    void enviarRecordatorioUrgente_citaFueraDeVentanaDeDosHoras_lanzaCitaFueraDeVentanaUrgenteException(String fecha) {
+        Cita cita = new Cita(7L, "Pedro Díaz", "3005551234",
+            LocalDateTime.parse(fecha), CanalNotificacion.SMS, false);
+        when(citaRepository.findById(7L)).thenReturn(Optional.of(cita));
+
+        assertThrows(CitaFueraDeVentanaUrgenteException.class,
+            () -> citaReminderService.enviarRecordatorioUrgente(7L));
+
+        assertFalse(cita.isRecordatorioEnviado());
+        verifyNoInteractions(canalUrgenteMock);
+        verify(citaRepository, never()).save(any());
+    }
+
+    @Test
+    void enviarRecordatorioUrgente_citaJustoADosHoras_enviaRecordatorio() {
+        Cita cita = new Cita(8L, "Sofía Mora", "3007778899",
+            LocalDateTime.of(2026, 8, 10, 11, 0), CanalNotificacion.SMS, false);
+        when(citaRepository.findById(8L)).thenReturn(Optional.of(cita));
+
+        citaReminderService.enviarRecordatorioUrgente(8L);
+
+        verify(canalUrgenteMock).enviar(eq(cita), contains("URGENTE"));
+        verify(citaRepository).save(cita);
+        assertTrue(cita.isRecordatorioEnviado());
+    }
+
+    @Test
+    void enviarRecordatorioUrgente_pacienteConCanalEmail_lanzaCanalUrgenteNoDisponibleException() {
+        Cita cita = new Cita(9L, "Ana Gómez", "ana@correo.com",
+            LocalDateTime.of(2026, 8, 10, 10, 30), CanalNotificacion.EMAIL, false);
+        when(citaRepository.findById(9L)).thenReturn(Optional.of(cita));
+
+        assertThrows(CanalUrgenteNoDisponibleException.class,
+            () -> citaReminderService.enviarRecordatorioUrgente(9L));
+
+        assertFalse(cita.isRecordatorioEnviado());
+        verifyNoInteractions(canalUrgenteMock);
+        verify(citaRepository, never()).save(any());
     }
 }

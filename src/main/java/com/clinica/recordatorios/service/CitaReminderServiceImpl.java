@@ -2,17 +2,23 @@ package com.clinica.recordatorios.service;
 
 import com.clinica.recordatorios.channel.ReminderChannel;
 import com.clinica.recordatorios.channel.ReminderChannelFactory;
+import com.clinica.recordatorios.domain.CanalNotificacion;
 import com.clinica.recordatorios.domain.Cita;
 import com.clinica.recordatorios.repository.CitaRepository;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
 public class CitaReminderServiceImpl implements CitaReminderService {
+
+    private static final Duration VENTANA_URGENTE = Duration.ofHours(2);
+    private static final String MENSAJE_URGENTE =
+        "URGENTE: su cita es en menos de 2 horas y no ha sido confirmada";
 
     private final CitaRepository citaRepository;
     private final ReminderChannelFactory reminderChannelFactory;
@@ -50,10 +56,22 @@ public class CitaReminderServiceImpl implements CitaReminderService {
     public void enviarRecordatorioUrgente(Long citaId) {
         Cita cita = citaRepository.findById(citaId)
             .orElseThrow(() -> new CitaNoEncontradaException(citaId));
+        validarCitaUrgente(cita);
 
-        canalUrgente.enviar(cita, "URGENTE: su cita es en menos de 2 horas y no ha sido confirmada");
+        canalUrgente.enviar(cita, MENSAJE_URGENTE);
         cita.setRecordatorioEnviado(true);
         citaRepository.save(cita);
+    }
+
+    private void validarCitaUrgente(Cita cita) {
+        LocalDateTime ahora = LocalDateTime.now(clock);
+        LocalDateTime fechaHoraCita = cita.getFechaHoraCita();
+        if (!fechaHoraCita.isAfter(ahora) || fechaHoraCita.isAfter(ahora.plus(VENTANA_URGENTE))) {
+            throw new CitaFueraDeVentanaUrgenteException(cita.getId(), fechaHoraCita);
+        }
+        if (cita.getCanalPreferido() != CanalNotificacion.SMS) {
+            throw new CanalUrgenteNoDisponibleException(cita.getId(), cita.getCanalPreferido());
+        }
     }
 
     private String construirMensaje(Cita cita) {
