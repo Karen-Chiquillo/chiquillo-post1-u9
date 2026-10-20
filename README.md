@@ -44,6 +44,16 @@ Las pruebas corren sin advertencias. Con JDK 21 y la configuración por defecto,
 - **`ReminderChannelFactory` / `ReminderChannel` → Mock.** El comportamiento bajo prueba es la selección de la estrategia: que el servicio pida a la Factory el canal preferido de la cita y que ese canal reciba el mensaje. Eso solo se comprueba verificando interacciones (`obtenerCanal(canal)` y `enviar(eq(cita), ...)`), no con un valor de retorno; además `enviar` devuelve `void`, así que un stub del canal no tendría nada que devolver. Un matiz que la guía no separa: el `@Mock` de la Factory hace de **stub** en `citaEnVentana_usaElCanalPreferido`, donde solo se programa `obtenerCanal(EMAIL)` y lo que se verifica es el envío, y de **mock** en `cualquierCanalPreferido_pideALaFactoryEseCanal`, donde se verifica la llamada para EMAIL y SMS. Mockito no define el tipo de doble por la anotación, sino por lo que cada prueba hace con él.
 - **`Clock` → Fake (no Mock).** `Clock.fixed(Instant.parse("2026-08-10T09:00:00Z"), ZoneId.of("UTC"))` no es un doble hecho a mano: es una implementación real y completa de `java.time.Clock` que trae el JDK, así que `LocalDateTime.now(clock)` funciona igual que en producción, solo que con el instante congelado. Mockearlo exigiría programar `instant()` y `getZone()` por separado, y con `Clock.systemDefaultZone()` la prueba de los límites de la ventana no se podría escribir porque el resultado cambiaría en cada ejecución. Con el fake, `consultaLosLimitesExactos` comprueba `2026-08-10T09:00` y `2026-08-11T09:00` en cualquier máquina y a cualquier hora.
 
+**Diagnóstico antes del refactor (Parte 2).** La primera versión de `enviarRecordatorioUrgente(Long citaId)` funciona en ejecución normal, pero no se puede probar en aislamiento. La línea responsable es la 52 de `CitaReminderServiceImpl`:
+
+```java
+ReminderChannel canalUrgente = new SmsReminderChannel(new TwilioNotificadorSmsGateway());
+```
+
+El canal y el gateway se crean dentro del propio método, en cada llamada, así que no llegan por el constructor ni por un parámetro: una prueba no tiene ningún punto donde entregarle al servicio un `@Mock ReminderChannel`. Por eso el escenario más importante, "el gateway de SMS falla y la cita no debe quedar marcada como enviada", no se puede escribir: no hay forma de hacer que `enviar(...)` lance una excepción, y cualquier prueba que llame al método termina usando el `TwilioNotificadorSmsGateway` real, que en producción haría una llamada HTTP a un proveedor externo. Tampoco se puede verificar qué mensaje recibió el canal, porque el objeto que lo recibe nunca sale del método. Técnicamente se podría interceptar ese `new` con `Mockito.mockConstruction(SmsReminderChannel.class)`, pero sería atar la prueba al detalle de qué clase se instancia y en qué línea; la dificultad para probar es un síntoma de que el diseño viola DIP (el servicio depende de dos clases concretas), y se corrige en el diseño, no con una API de pruebas más avanzada.
+
+El contraste con `enviarRecordatoriosPendientes()` es directo: ese método nunca usa `new` para sus colaboradores. El repositorio, la Factory y el `Clock` llegan por el constructor, y por eso en la Parte 1 se reemplazaron por dos mocks y un fake sin tocar el código de producción. Lo que falta en `enviarRecordatorioUrgente` es exactamente ese punto de sustitución.
+
 ---
 
 ## Ejecutar las pruebas
