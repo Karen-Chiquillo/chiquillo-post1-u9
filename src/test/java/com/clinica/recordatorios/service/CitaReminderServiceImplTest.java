@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -123,5 +124,44 @@ class CitaReminderServiceImplTest {
         ArgumentCaptor<String> mensajeCaptor = ArgumentCaptor.forClass(String.class);
         verify(reminderChannelMock).enviar(eq(cita), mensajeCaptor.capture());
         assertTrue(mensajeCaptor.getValue().contains("2026-08-10T15:00"));
+    }
+
+    @Test
+    void enviarRecordatorioUrgente_citaExistente_usaCanalUrgenteInyectado() {
+        Cita cita = new Cita(5L, "Luis Peña", "3001234567",
+            LocalDateTime.of(2026, 8, 10, 10, 30), CanalNotificacion.SMS, false);
+        when(citaRepository.findById(5L)).thenReturn(Optional.of(cita));
+
+        citaReminderService.enviarRecordatorioUrgente(5L);
+
+        verify(canalUrgenteMock, times(1)).enviar(eq(cita), contains("URGENTE"));
+        verify(citaRepository).save(cita);
+        assertTrue(cita.isRecordatorioEnviado());
+    }
+
+    @Test
+    void enviarRecordatorioUrgente_gatewayFalla_noMarcaComoEnviado() {
+        Cita cita = new Cita(6L, "Marta Ruiz", "3009876543",
+            LocalDateTime.of(2026, 8, 10, 10, 30), CanalNotificacion.SMS, false);
+        when(citaRepository.findById(6L)).thenReturn(Optional.of(cita));
+        doThrow(new IllegalStateException("Gateway de SMS no disponible"))
+            .when(canalUrgenteMock).enviar(any(), anyString());
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+            () -> citaReminderService.enviarRecordatorioUrgente(6L));
+
+        assertEquals("Gateway de SMS no disponible", ex.getMessage());
+        assertFalse(cita.isRecordatorioEnviado());
+        verify(citaRepository, never()).save(any());
+    }
+
+    @Test
+    void enviarRecordatorioUrgente_citaInexistente_lanzaCitaNoEncontradaException() {
+        when(citaRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThrows(CitaNoEncontradaException.class,
+            () -> citaReminderService.enviarRecordatorioUrgente(99L));
+
+        verifyNoInteractions(canalUrgenteMock);
     }
 }
